@@ -1,0 +1,595 @@
+<!-- Name: Shirley Lin -->
+<!-- Date: 11/11/25 -->
+<!-- Assignment: Project 6 - Link in JavaScript -->
+
+<!-- ------------------- Website UI ------------------- -->
+
+<head>
+	<title>Link in JavaScript</title>
+	<meta charset="UTF-8">
+
+	<style>
+		body {
+			font-family: sans-serif;
+			text-align: center;
+			padding: 20px;
+		}
+		#dropZone {
+			width: 600px;
+			height: 150px;
+			border: 2px dashed #888;
+			margin: 20px auto;
+			line-height: 150px;
+			color: #888;
+			font-size: 20px;
+			border-radius: 10px;
+			user-select: none;
+		}
+		#dropZone.hover {
+			border-color: #333;
+			color: #333;
+		}
+		canvas {
+			display: block;
+			margin: 20px auto;
+			border: 1px solid black;
+		}
+	</style>
+</head>
+<body>
+
+<br>
+<canvas id="myCanvas" width="1000" height="500" style="border:1px solid #cccccc;"></canvas>
+<br>
+
+<h2>Drag your map JSON file here</h2>
+<div id="dropZone">Drop map file here</div>
+
+<script type="text/javascript">
+
+
+
+
+/* ------------------- Sprite Class ------------------- */
+
+class Sprite {
+	constructor(x, y, w, h) {
+		this.x = x
+		this.y = y
+		this.w = w
+		this.h = h
+		this.isValid = true
+	}
+
+	isLink() { return false }
+	isTree() { return false }
+	isTreasureChest() {return false }
+	isBoomerang() {return false }
+
+	update() {
+		return this.isValid
+	}
+}
+
+/* ------------------- Link Class ------------------- */
+
+class Link extends Sprite {
+	constructor(x, y, w, h) {
+		super(x, y, w, h)
+
+		this.px = this.x
+		this.py = this.y
+		this.imageNum = 0
+		this.direction = 0 // 0 - down, 1 - left, 2 - right, 3 - up
+		this.updateImage = false
+		this.speed = 8
+		this.rupeesCollected = 0
+
+		this.images = []
+		this.TOTAL_NUM_IMAGES = 44
+		this.NUM_DIRECTIONS = 4
+		this.MAX_IMAGES_PER_DIRECTION = 11
+
+		let index = 1
+		for(let i = 0; i < this.NUM_DIRECTIONS; i ++) {
+			this.images[i] = []
+			for(let j = 0; j < this.MAX_IMAGES_PER_DIRECTION; j++) {
+				this.images[i].push(new Image())
+				this.images[i][j].src = "images/link" + index++ + ".png"
+			}
+		}
+	}
+
+	update() {
+		// Animate Link by cycling through the images
+		// Doesn't animate if updateImage is false (no arrow keys are being pressed)
+		if(this.updateImage) {
+			if(this.imageNum++ >= this.MAX_IMAGES_PER_DIRECTION - 1)
+				this.imageNum = 0
+		} else
+			this.imageNum = 0 // Reset Link to standing image
+
+		return this.isValid
+	}
+
+	drawYourself(g, currentRoomX, currentRoomY) {
+		g.drawImage(this.images[this.direction][this.imageNum], this.x - currentRoomX, this.y - currentRoomY, this.w, this.h)
+	}
+
+	updateLocation(direction) {
+		switch(direction) {
+			case "left":
+				this.direction = 1
+				this.x -= this.speed
+				break
+			case "right":
+				this.direction = 2
+				this.x += this.speed
+				break
+			case "up":
+				this.direction = 3
+				this.y -= this.speed
+				break
+			case "down":
+				this.direction = 0
+				this.y += this.speed
+				break
+		}
+	}
+
+	// Called by Model if Link is colliding with another sprite to take him out
+	fixCollision(s) {
+		if((this.px + this.w <= s.x) && (this.x + this.w >= s.x))
+			this.x = s.x - this.w - 1
+		else if((this.px >= s.x + s.w) && (this.x <= s.x + s.w))
+			this.x = s.x + s.w + 1
+		if((this.py + this.h <= s.y) && (this.y + this.h >= s.y))
+			this.y = s.y - this.h - 1
+		else if((this.py >= s.y + s.h) && (this.y <= s.y + s.h))
+			this.y = s.y + s.h + 1
+	}
+
+	setPX() { this.px = this.x }
+	setPY() { this.py = this.y }
+	setUpdateImage(value) { this.updateImage = value }
+	isLink() { return true }
+	toString() { return "Link (x, y) = (" + this.x + ", " + this.y + "), w = " + this.w + ", h = " + this.h }
+}
+
+/* ------------------- Tree Class ------------------- */
+
+class Tree extends Sprite {
+	constructor(x, y, w, h) {
+		super(x, y, w, h)
+		this.image = new Image()
+		this.image.src = "images/tree.png"
+	}
+
+	drawYourself(g, currentRoomX, currentRoomY) {
+		g.drawImage(this.image, this.x - currentRoomX, this.y - currentRoomY, this.w, this.h)
+	}
+
+	// Overrides
+	isTree() { return true }
+	toString() { return "Tree (x, y) = (" + this.x + ", " + this.y + "), w = " + this.w + ", h = " + this.h }
+}
+
+/* ------------------- TreasureChest Class ------------------- */
+
+class TreasureChest extends Sprite {
+	constructor(x, y, w, h) {
+		super(x, y, w, h)
+		this.imageIndex = 0
+		this.canCollect = false
+		this.countdown = 45
+
+		this.images = []
+		this.images.push(new Image())
+		this.images[0].src = "images/treasurechest.png"
+		this.images.push(new Image())
+		this.images[1].src = "images/rupee.png"
+	}
+
+	update() {
+		// Once Link or Boomerang interacts with the treasure chest start the countdown
+		if(this.imageIndex == 1) {
+			this.countdown--
+			if(this.countdown < 0)
+				this.isValid = false
+			else if(this.countdown < 40)
+				this.canCollect = true
+		}
+
+		return this.isValid
+	}
+
+	drawYourself(g, currentRoomX, currentRoomY) {
+		g.drawImage(this.images[this.imageIndex], this.x - currentRoomX, this.y - currentRoomY, this.w, this.h)
+	}
+
+	openChest() {
+		if(this.imageIndex == 0)
+			this.imageIndex = 1
+	}
+
+	collectTreasure() { this.isValid = false }
+	isTreasureChest() { return true }
+	toString() { return "Treasure Chest (x, y) = (" + this.x + ", " + this.y + "), w = " + this.w + ", h = " + this.h }
+}
+
+/* ------------------- Boomerang Class ------------------- */
+
+class Boomerang extends Sprite {
+	constructor(x, y, w, h, direction) {
+		super(x, y, w, h)
+		this.speed = 12
+		this.direction = direction
+		this.imageIndex = 0
+
+		this.images = []
+		this.TOTAL_NUM_IMAGES = 4
+		for(let i = 0; i < this.TOTAL_NUM_IMAGES; i++) {
+			this.images.push(new Image())
+			this.images[i].src = "images/boomerang" + (i + 1) + ".png"
+		}
+	}
+
+	update() {
+		// Animates the boomerang
+		if(this.imageIndex++ >= this.TOTAL_NUM_IMAGES - 1)
+			this.imageIndex = 0
+
+		// Moves the boomerang across the screen in the direction Link is facing
+		switch(this.direction) {
+			case 0:
+				this.y += this.speed
+				break
+			case 1:
+				this.x -= this.speed
+				break
+			case 2:
+				this.x += this.speed
+				break
+			case 3:
+				this.y -= this.speed
+				break
+		}
+
+		return this.isValid
+	}
+
+	drawYourself(g, currentRoomX, currentRoomY) {
+		g.drawImage(this.images[this.imageIndex], this.x - currentRoomX, this.y - currentRoomY, this.w, this.h)
+	}
+
+	deleteBoomerang() { this.isValid = false }
+	isBoomerang() { return true }
+	toString() { return "Boomerang (x, y) = (" + this.x + ", " + this.y + "), w = " + this.w + ", h = " + this.h}
+}
+
+
+
+
+/* ------------------- Model Class ------------------- */
+
+class Model {
+	constructor() {
+		this.sprites = []
+
+		this.link = new Link(80, 80, 45, 45)
+		this.sprites.push(this.link)
+	}
+
+	update() {
+		// Loop through all the sprites, update them, and check for collision
+		for(let i = 0; i < this.sprites.length; i++) {
+			let sprite1 = this.sprites[i]
+
+			// Remove the sprite if it's no longer valid
+			if(!sprite1.update()) {
+				this.sprites.splice(i, 1)
+				continue
+			}
+
+			for(let j = 0; j < this.sprites.length; j++) {
+				// Don't check for collision if the sprites are the same
+				if(i == j)
+					continue
+
+				let sprite2 = this.sprites[j]
+				if(this.checkCollision(sprite1, sprite2)) {
+					// Collision between Link and Tree
+					if(sprite1.isLink() && sprite2.isTree())
+						this.link.fixCollision(sprite2)
+					// Collision between Link and TreasureChest
+					else if(sprite1.isLink() && sprite2.isTreasureChest()) {
+						this.link.fixCollision(sprite2)
+
+						// Let Link collect the rupee once the treasure chest is open and the buffer time is up
+						if(sprite2.canCollect) {
+							sprite2.collectTreasure()
+							this.link.rupeesCollected++
+						} else
+							sprite2.openChest() // Otherwise, open the chest
+					}
+					// Collision between Boomerang and TreasureChest
+					else if(sprite1.isBoomerang() && sprite2.isTreasureChest()) {
+						sprite1.deleteBoomerang()
+
+						if(sprite2.canCollect) {
+							sprite2.collectTreasure()
+							this.link.rupeesCollected++
+						} else
+							sprite2.openChest()
+					}
+					// Collision between Boomerang and Tree
+					else if(sprite1.isBoomerang() && sprite2.isTree())
+						sprite1.deleteBoomerang()
+				}
+			}
+		}
+	}
+
+	// Check if two sprites are colliding
+	checkCollision(spriteA, spriteB) {
+		if(spriteA.x > spriteB.x + spriteB.w)
+			return false
+		if(spriteA.x + spriteA.w < spriteB.x)
+			return false
+		if(spriteA.y > spriteB.y + spriteB.h)
+			return false
+		if(spriteA.y + spriteA.h < spriteB.y)
+			return false
+
+		return true
+	}
+
+	// Called by View to check if Link has crossed any of the room boundaries
+	crossBoundary(currentRoomX, currentRoomY, windowWidth, windowHeight) {
+		let linkX = this.link.x + this.link.w
+		let linkY = this.link.y + this.link.h
+		
+		if(linkX - currentRoomX > windowWidth)
+			return 1
+		else if(linkX < currentRoomX)
+			return 2
+		else if(linkY < currentRoomY)
+			return 3
+		else if(linkY - currentRoomY > windowHeight)
+			return 4
+	}
+
+	// Called by Controller to let Model know that an arrow key has been pressed
+	moveLink(direction) {
+		this.link.updateLocation(direction) // Moves Link in the corresponding direction
+		this.link.setUpdateImage(true) // Starts animating Link
+	}
+
+	// Called by Controller to let Model know that no arrow key is being pressed
+	resetLink() {
+		this.link.setUpdateImage(false) // Stops animating Link
+	}
+
+	savePreviousPosition() {
+		this.link.setPX()
+		this.link.setPY()
+	}
+
+	// Called by Controller to create a Boomerang when the user presses space
+	createBoomerang() {
+		let x = this.link.x + this.link.w / 2
+		let y = this.link.y + this.link.h / 2
+
+		this.sprites.push(new Boomerang(x, y, 20, 20, this.link.direction))
+	}
+	
+	// This reads the Json file
+	// This function is called upon the event of dragging/dropping the Json file onto the page
+	loadMap(mapData) {
+		// Clear the current sprites before loading from file
+		this.sprites = []
+		this.sprites.push(this.link)
+
+		for(let i = 0; i < mapData.trees.length; i++) {
+			let t = mapData.trees[i]
+			this.sprites.push(new Tree(t.x, t.y, t.w, t.h))
+		}
+		for(let i = 0; i < mapData.treasureChests.length; i++) {
+			let c = mapData.treasureChests[i]
+			this.sprites.push(new TreasureChest(c.x, c.y, c.w, c.h))
+		}
+
+		console.log("Map loaded:", mapData);
+	}
+}
+
+
+
+
+/* ------------------- View Class ------------------- */
+
+class View {
+	constructor(model) {
+		this.model = model
+		this.canvas = document.getElementById("myCanvas")
+
+		this.currentRoomX = 0
+		this.currentRoomY = 0
+	}
+
+	update() {
+		let ctx = this.canvas.getContext("2d")
+		ctx.clearRect(0, 0, 1000, 500)
+
+		// Dark green background fill color
+		ctx.fillStyle = "rgb(72, 152, 72)"
+		ctx.fillRect(0, 0, 1000, 500)
+
+		// Draw all the sprites
+		for(let i = 0; i < this.model.sprites.length; i++) {
+			let s = this.model.sprites[i]
+			s.drawYourself(ctx, this.currentRoomX, this.currentRoomY)
+		}
+
+		// Display the number of rupees Link has collected
+		ctx.font = "14px serif"
+		ctx.fillStyle = "white"
+		ctx.fillText("Number of Rupees Collected: " + this.model.link.rupeesCollected, 790, 20)
+
+		// Calls a function in Model to check if Link has crossed any of the room boundaries, and updates the camera view
+		let direction = this.model.crossBoundary(this.currentRoomX, this.currentRoomY, this.canvas.width, this.canvas.height)
+		switch(direction) {
+			case 1: // Move camera right
+				this.currentRoomX += this.canvas.width
+				break
+			case 2: // Move camera left
+				this.currentRoomX -= this.canvas.width
+				break
+			case 3: // Move camera up
+				this.currentRoomY -= this.canvas.height
+				break
+			case 4: // Move camera down
+				this.currentRoomY += this.canvas.height
+				break
+			default:
+				break
+		}
+	}
+}
+
+
+
+
+/* ------------------- Controller Class ------------------- */
+
+class Controller {
+	constructor(model, view) {
+		this.model = model
+		this.view = view
+		let self = this
+		document.addEventListener('keydown', function(event) { self.keyDown(event) }, false)
+		document.addEventListener('keyup', function(event) { self.keyUp(event) }, false)
+
+		this.key_right = false
+		this.key_left = false
+		this.key_up = false
+		this.key_down = false
+		this.key_space = false
+	}
+
+	update() {
+		// Save Link's previous position; used for collision fixing
+		this.model.savePreviousPosition();
+
+		// Tells Model than an arrow key is being pressed and to update Link's location and start animating his movements
+		if(this.key_left)
+			this.model.moveLink("left")
+		if(this.key_right)
+			this.model.moveLink("right")
+		if(this.key_up)
+			this.model.moveLink("up")
+		if(this.key_down)
+			this.model.moveLink("down")
+
+		// Tells Model that no arrow key is being pressed and to stop animating Link's movement
+		if(!this.key_left && !this.key_right && !this.key_up && !this.key_down)
+			this.model.resetLink();
+	}
+
+	keyDown(event) {
+		if(event.keyCode == 39) 
+			this.key_right = true
+		else if(event.keyCode == 37) 
+			this.key_left = true
+		else if(event.keyCode == 38) 
+			this.key_up = true
+		else if(event.keyCode == 40) 
+			this.key_down = true
+		else if(event.keyCode == 32) {
+			// Generate a Boomerang from Link's location when the user presses space
+			if(!this.key_space) {
+				this.model.createBoomerang()
+				this.key_space = true
+			}
+		}
+	}
+
+	keyUp(event) {
+		if(event.keyCode == 39) 
+			this.key_right = false
+		else if(event.keyCode == 37) 
+			this.key_left = false
+		else if(event.keyCode == 38) 
+			this.key_up = false
+		else if(event.keyCode == 40) 
+			this.key_down = false
+		else if(event.keyCode == 32)
+			this.key_space = false
+	}
+}
+
+
+
+
+/* ------------------- Game Class ------------------- */
+
+class Game {
+	constructor() {
+		this.model = new Model();
+		this.view = new View(this.model);
+		this.controller = new Controller(this.model, this.view);
+	
+		// This code will allow you to drag and drop your map instead of hardcoding it!
+		// Do not change this code
+		var dropZone = document.getElementById("dropZone");
+		var self = this;
+
+		// Prevent default drag behaviors
+		["dragenter", "dragover", "dragleave", "drop"].forEach(function(eventName) {
+		  dropZone.addEventListener(eventName, function(e) { e.preventDefault(); e.stopPropagation(); });
+		});
+
+		// Highlight drop zone when dragging over
+		["dragenter", "dragover"].forEach(function(eventName) {
+		  dropZone.addEventListener(eventName, function() { dropZone.classList.add("hover"); });
+		});
+
+		["dragleave", "drop"].forEach(function(eventName) {
+		  dropZone.addEventListener(eventName, function() { dropZone.classList.remove("hover"); });
+		});
+
+		// Handle dropped files
+		dropZone.addEventListener("drop", function(e) {
+			var file = e.dataTransfer.files[0];
+			if (!file) return;
+			if (!file.name.endsWith(".json")) {
+				alert("Please drop your map JSON file here.");
+				return;
+			}
+
+			var reader = new FileReader();
+			reader.onload = function(ev) {
+				try {
+					var data = JSON.parse(ev.target.result);
+					self.model.loadMap(data);
+				} catch(err) {
+					alert("Error parsing JSON: " + err.message);
+				}
+			};
+			reader.readAsText(file);
+		});
+	}
+
+	onTimer() {
+		this.controller.update();
+		this.model.update();
+		this.view.update();
+	}
+}
+
+let game = new Game()
+let timer = setInterval(function() { game.onTimer() }, 40)
+
+</script>
+
+</body>
